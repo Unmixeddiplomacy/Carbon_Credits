@@ -1,12 +1,16 @@
 import { createApi, fetchBaseQuery } from "@reduxjs/toolkit/query/react";
 
+const API_BASE_URL =
+  import.meta.env.VITE_API_URL ??
+  (import.meta.env.PROD ? "/api" : "http://localhost:3000/api");
+
 /**
  * RTK Query API for credits with automatic caching, polling, and invalidation
  */
 export const creditsApi = createApi({
   reducerPath: "creditsApi",
   baseQuery: fetchBaseQuery({
-    baseUrl: "http://localhost:3000/api",
+    baseUrl: API_BASE_URL,
     credentials: "include",
   }),
   tagTypes: ["Credits", "CreditHistory", "EligibleTrees", "Retirements"],

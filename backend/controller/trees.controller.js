@@ -17,11 +17,60 @@ const provider = new ethers.providers.JsonRpcProvider(
   process.env.RPC_URL || "http://127.0.0.1:8545"
 );
 
+const treesColumnCache = new Map();
+const COLUMN_CACHE_TTL_MS = 30_000;
+
+function setTreesColumnCache(columnName, exists) {
+  treesColumnCache.set(columnName, {
+    exists: Boolean(exists),
+    checkedAt: Date.now(),
+  });
+}
+
+async function hasTreesColumn(columnName) {
+  const cached = treesColumnCache.get(columnName);
+  if (cached && Date.now() - cached.checkedAt < COLUMN_CACHE_TTL_MS) {
+    return cached.exists;
+  }
+
+  try {
+    const { rows } = await pool.query(
+      `SELECT EXISTS (
+         SELECT 1
+         FROM information_schema.columns
+         WHERE table_schema = 'public'
+           AND table_name = 'trees'
+           AND column_name = $1
+       ) AS exists`,
+      [columnName]
+    );
+    setTreesColumnCache(columnName, Boolean(rows[0]?.exists));
+  } catch (err) {
+    console.warn(`hasTreesColumn(${columnName}) check failed:`, err?.message || err);
+    setTreesColumnCache(columnName, false);
+  }
+
+  return treesColumnCache.get(columnName)?.exists || false;
+}
+
+async function ensureTreeTxTrackingColumns() {
+  await pool.query(
+    `ALTER TABLE trees ADD COLUMN IF NOT EXISTS tx_hash VARCHAR(66)`
+  );
+  await pool.query(
+    `ALTER TABLE trees ADD COLUMN IF NOT EXISTS tx_chain_id INTEGER`
+  );
+  setTreesColumnCache("tx_hash", true);
+  setTreesColumnCache("tx_chain_id", true);
+}
+
 const treeRowToDto = (row) => ({
   id: row.id,
   ownerUserId: row.owner_user_id,
   ownerWallet: row.owner_wallet,
   chainTreeId: row.chain_tree_id,
+  txHash: row.tx_hash || null,
+  txChainId: row.tx_chain_id != null ? Number(row.tx_chain_id) : null,
   metadataUri: row.metadata_uri,
   metadata: row.metadata,
   status: row.status,
@@ -83,9 +132,14 @@ export const list_trees = async (req, res) => {
     const userId = req.user?.id;
     if (!userId) return res.status(401).json({ error: "Not authenticated" });
 
+    const includeTxHash = await hasTreesColumn("tx_hash");
+    const includeTxChainId = await hasTreesColumn("tx_chain_id");
+    const txHashSelect = includeTxHash ? "tx_hash," : "NULL::varchar AS tx_hash,";
+    const txChainIdSelect = includeTxChainId ? "tx_chain_id," : "NULL::integer AS tx_chain_id,";
+
     const { rows } = await pool.query(
       `SELECT id, owner_user_id, owner_wallet, chain_tree_id, metadata_uri, metadata, 
-              status, total_credits_accrued, carbon_absorption_kg_per_year,
+              ${txHashSelect} ${txChainIdSelect} status, total_credits_accrued, carbon_absorption_kg_per_year,
               last_verified_at, verification_required_by
        FROM trees 
        WHERE owner_user_id = $1
@@ -107,9 +161,23 @@ export const tree_detail = async (req, res) => {
       return res.status(400).json({ error: "Invalid id" });
     }
 
+    let includeTxHash = await hasTreesColumn("tx_hash");
+    let includeTxChainId = await hasTreesColumn("tx_chain_id");
+    if ((txHash || safeChainId != null) && (!includeTxHash || !includeTxChainId)) {
+      try {
+        await ensureTreeTxTrackingColumns();
+        includeTxHash = await hasTreesColumn("tx_hash");
+        includeTxChainId = await hasTreesColumn("tx_chain_id");
+      } catch (schemaErr) {
+        console.warn("register_callback schema ensure failed:", schemaErr?.message || schemaErr);
+      }
+    }
+    const txHashSelect = includeTxHash ? "tx_hash," : "NULL::varchar AS tx_hash,";
+    const txChainIdSelect = includeTxChainId ? "tx_chain_id," : "NULL::integer AS tx_chain_id,";
+
     const { rows } = await pool.query(
       `SELECT id, owner_user_id, owner_wallet, chain_tree_id, metadata_uri, metadata,
-              status, total_credits_accrued, carbon_absorption_kg_per_year,
+              ${txHashSelect} ${txChainIdSelect} status, total_credits_accrued, carbon_absorption_kg_per_year,
               last_verified_at, verification_required_by
        FROM trees WHERE id = $1`,
       [id]
@@ -147,10 +215,13 @@ export const register_callback = async(req,res) => {
     const userId = req.user && req.user.id;
     if (!userId) return res.status(401).json({ error: 'Not authenticated' });
 
-    const { dbId, chainTreeId, ownerAddress } = req.body;
+    const { dbId, chainTreeId, ownerAddress, txHash, chainId } = req.body;
     if (typeof dbId === 'undefined' || typeof chainTreeId === 'undefined' || !ownerAddress) {
       return res.status(400).json({ error: 'Missing fields' });
     }
+
+    const parsedChainId = Number.parseInt(String(chainId ?? ""), 10);
+    const safeChainId = Number.isFinite(parsedChainId) ? parsedChainId : null;
 
     // Option (optional): verify owner on-chain
     const contract = new ethers.Contract(CONTRACT_ADDRESS, abi, provider);
@@ -160,10 +231,45 @@ export const register_callback = async(req,res) => {
     }
 
     // update DB
-    await pool.query(
-      `UPDATE trees SET chain_tree_id = $1, owner_wallet = $2 WHERE id = $3`,
-      [chainTreeId, ownerAddress, dbId]
-    );
+    const includeTxHash = await hasTreesColumn("tx_hash");
+    const includeTxChainId = await hasTreesColumn("tx_chain_id");
+    if (includeTxHash && includeTxChainId) {
+      await pool.query(
+        `UPDATE trees
+         SET chain_tree_id = $1,
+             owner_wallet = $2,
+             tx_hash = COALESCE($3, tx_hash),
+             tx_chain_id = COALESCE($4, tx_chain_id)
+         WHERE id = $5`,
+        [chainTreeId, ownerAddress, txHash || null, safeChainId, dbId]
+      );
+    } else if (includeTxHash) {
+      await pool.query(
+        `UPDATE trees
+         SET chain_tree_id = $1,
+             owner_wallet = $2,
+             tx_hash = COALESCE($3, tx_hash)
+         WHERE id = $4`,
+        [chainTreeId, ownerAddress, txHash || null, dbId]
+      );
+    } else if (includeTxChainId) {
+      await pool.query(
+        `UPDATE trees
+         SET chain_tree_id = $1,
+             owner_wallet = $2,
+             tx_chain_id = COALESCE($3, tx_chain_id)
+         WHERE id = $4`,
+        [chainTreeId, ownerAddress, safeChainId, dbId]
+      );
+    } else {
+      await pool.query(
+        `UPDATE trees
+         SET chain_tree_id = $1,
+             owner_wallet = $2
+         WHERE id = $3`,
+        [chainTreeId, ownerAddress, dbId]
+      );
+    }
 
     return res.json({ ok: true });
   } catch (err) {

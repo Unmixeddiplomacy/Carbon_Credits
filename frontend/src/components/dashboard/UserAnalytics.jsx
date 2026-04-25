@@ -3,6 +3,13 @@ import apiClient from "../../api/client";
 import Card from "../ui/Card";
 import LineChart from "../admin/LineChart";
 
+const EMPTY_SERIES = {
+  treesRegistered: [],
+  marketplaceTransactions: [],
+  creditsIssued: [],
+  creditsRetired: [],
+};
+
 function ChartCard({ title, children }) {
   return (
     <Card className="flex h-full flex-col p-5 sm:p-6">
@@ -28,7 +35,22 @@ export default function UserAnalytics() {
       try {
         const res = await apiClient.get("/analytics/overview?days=30");
         if (!mounted) return;
-        setData(res.data);
+        const payload = res?.data;
+        if (!payload || typeof payload !== "object" || !payload.series || typeof payload.series !== "object") {
+          throw new Error(
+            import.meta.env.PROD
+              ? "Analytics API returned an invalid response. Set VITE_API_URL to your deployed backend URL (including /api)."
+              : "Analytics API returned an invalid response."
+          );
+        }
+
+        setData({
+          ...payload,
+          series: {
+            ...EMPTY_SERIES,
+            ...payload.series,
+          },
+        });
       } catch (e) {
         if (!mounted) return;
         setError(e?.response?.data?.message || e?.message || "Failed to load analytics");

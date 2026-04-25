@@ -4,6 +4,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import crypto from "crypto";
+import { syncIssueCreditsOnChain } from "../services/carbonCreditOnchain.service.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -318,6 +319,18 @@ export const issueCredits = async (req, res) => {
     );
 
     await client.query("COMMIT");
+
+    if (!txHash) {
+      syncIssueCreditsOnChain({
+        chainTreeId: tree.chain_tree_id,
+        recipientWallet: tree.user_wallet,
+        amountKg: creditsToIssue,
+        source: "manual_issue",
+        reference: `issuance:${issuanceRows[0].id}:tree:${treeId}:user:${userId}`,
+      }).catch((err) => {
+        console.error("[CarbonCredit] manual issue sync failed:", err?.message || err);
+      });
+    }
 
     return res.json({
       success: true,

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { getTxExplorerUrl } from "../../config/networks";
 
 /**
  * TreeCard - Reusable tree display card
@@ -17,6 +18,11 @@ const statusStyles = {
   listed: "bg-blue-50 text-blue-700 border-blue-200",
 };
 
+const explorerChainId = Number.parseInt(
+  import.meta.env.VITE_EXPLORER_CHAIN_ID || import.meta.env.VITE_CHAIN_ID || "11155111",
+  10
+);
+
 const TreeCard = ({ tree, isListed = false, onSell, compact = false }) => {
   const [expanded, setExpanded] = useState(false);
 
@@ -29,7 +35,13 @@ const TreeCard = ({ tree, isListed = false, onSell, compact = false }) => {
     : tree.location || "-";
   const plantedAt = tree.metadata?.plantedAt || tree.plantedAt;
   const status = isListed ? "listed" : tree.status || "pending";
-  const chainId = tree.chainTreeId || tree.chain_tree_id;
+  const chainTreeId = tree.chainTreeId || tree.chain_tree_id;
+  const txHash = tree.txHash || tree.tx_hash;
+  const txChainId = tree.txChainId || tree.tx_chain_id || explorerChainId;
+  const txExplorerUrl =
+    txHash && Number.isFinite(txChainId)
+      ? getTxExplorerUrl(txChainId, txHash)
+      : null;
   const lastVerified = tree.lastVerifiedAt || tree.last_verified_at;
 
   const getTreeAge = () => {
@@ -70,6 +82,25 @@ const TreeCard = ({ tree, isListed = false, onSell, compact = false }) => {
         </span>
       </div>
 
+      {txHash && (
+        <div className="mt-2 flex items-center justify-end text-[10px] text-neutral-500">
+          <span className="mr-1">Tx:</span>
+          {txExplorerUrl ? (
+            <a
+              href={txExplorerUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="font-mono font-medium text-emerald-700 hover:text-emerald-800"
+              title={txHash}
+            >
+              {txHash.slice(0, 10)}...
+            </a>
+          ) : (
+            <span className="font-mono" title={txHash}>{txHash.slice(0, 10)}...</span>
+          )}
+        </div>
+      )}
+
       {/* Stats Grid */}
       <div className="mt-4 grid grid-cols-2 gap-3">
         <div className="rounded-lg bg-neutral-50 p-2.5">
@@ -107,10 +138,30 @@ const TreeCard = ({ tree, isListed = false, onSell, compact = false }) => {
             <span>Last Verified</span>
             <span className="font-medium text-neutral-800">{formatDate(lastVerified)}</span>
           </div>
-          {chainId && (
+          {chainTreeId && (
             <div className="flex justify-between">
               <span>Chain ID</span>
-              <span className="font-mono font-medium text-neutral-800">#{chainId}</span>
+              <span className="font-mono font-medium text-neutral-800">#{chainTreeId}</span>
+            </div>
+          )}
+          {txHash && (
+            <div className="flex items-center justify-between gap-3">
+              <span>Registration Tx</span>
+              {txExplorerUrl ? (
+                <a
+                  href={txExplorerUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="font-mono font-medium text-emerald-700 hover:text-emerald-800"
+                  title={txHash}
+                >
+                  {txHash.slice(0, 10)}...
+                </a>
+              ) : (
+                <span className="font-mono font-medium text-neutral-800" title={txHash}>
+                  {txHash.slice(0, 10)}...
+                </span>
+              )}
             </div>
           )}
           <div className="flex justify-between">

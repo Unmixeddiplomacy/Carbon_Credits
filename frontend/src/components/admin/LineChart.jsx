@@ -23,12 +23,18 @@ export default function LineChart({ data, height = 180, xLabel = "Date", yLabel 
   const pointsData = Array.isArray(data) ? data : [];
   const values = pointsData.map((d) => Number(d.value) || 0);
   const dates = pointsData.map((d) => d.date);
+  const chartHeight = Number.isFinite(height) ? Math.max(120, Number(height)) : 180;
 
   const width = 560;
 
   if (!values.length) {
     return (
-      <div className="h-45 w-full rounded-xl border border-neutral-200 bg-neutral-50" />
+      <div
+        className="flex w-full items-center justify-center rounded-xl border border-neutral-200 bg-neutral-50"
+        style={{ height: chartHeight }}
+      >
+        <span className="text-xs font-medium text-neutral-500">No data yet</span>
+      </div>
     );
   }
 
@@ -42,7 +48,7 @@ export default function LineChart({ data, height = 180, xLabel = "Date", yLabel 
   const padTop = 12;
   const padBottom = 32;
   const innerW = width - padLeft - padRight;
-  const innerH = height - padTop - padBottom;
+  const innerH = chartHeight - padTop - padBottom;
 
   const xAt = (i) => padLeft + (i / Math.max(1, values.length - 1)) * innerW;
   const yAt = (v) => padTop + (1 - (v - yMin) / yRange) * innerH;
@@ -67,8 +73,9 @@ export default function LineChart({ data, height = 180, xLabel = "Date", yLabel 
 
   return (
     <svg
-      viewBox={`0 0 ${width} ${height}`}
-      className="h-45 w-full"
+      viewBox={`0 0 ${width} ${chartHeight}`}
+      className="w-full"
+      style={{ height: chartHeight }}
       aria-hidden="true"
       preserveAspectRatio="none"
     >
@@ -117,7 +124,7 @@ export default function LineChart({ data, height = 180, xLabel = "Date", yLabel 
           <text
             key={idx}
             x={xAt(idx)}
-            y={height - 10}
+            y={chartHeight - 10}
             textAnchor={idx === 0 ? "start" : idx === values.length - 1 ? "end" : "middle"}
           >
             {formatDateLabel(dates[idx])}
@@ -128,7 +135,7 @@ export default function LineChart({ data, height = 180, xLabel = "Date", yLabel 
       {/* Axis titles */}
       <text
         x={padLeft + innerW / 2}
-        y={height - 2}
+        y={chartHeight - 2}
         textAnchor="middle"
         className="text-neutral-400"
         fill="currentColor"

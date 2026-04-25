@@ -136,7 +136,7 @@ const RegisterTree = () => {
 
     const network = await provider.getNetwork();
     // Import network check from config
-    const { isSupportedNetwork, getNetworkErrorMessage } = await import("../../config/networks.js");
+    const { isSupportedNetwork, getNetworkErrorMessage, getTxExplorerUrl } = await import("../../config/networks.js");
     if (network && !isSupportedNetwork(network.chainId)) {
       throw new Error(getNetworkErrorMessage());
     }
@@ -188,7 +188,8 @@ const RegisterTree = () => {
       throw new Error("Could not determine registered tree id from the transaction.");
     }
 
-    return { treeId, txHash: tx.hash, owner: signerAddr };
+    const txExplorerUrl = getTxExplorerUrl(network.chainId, tx.hash);
+    return { treeId, txHash: tx.hash, owner: signerAddr, chainId: Number(network.chainId), txExplorerUrl };
   };
 
   const handleSubmit = async (e) => {
@@ -217,7 +218,7 @@ const RegisterTree = () => {
       setIsSubmitting(true);
       const { dbId, metadataURI } = await createMetadata();
 
-      const { treeId, txHash, owner } = await registerOnChain(metadataURI);
+      const { treeId, txHash, owner, chainId, txExplorerUrl } = await registerOnChain(metadataURI);
 
       // 3) Notify backend to bind on-chain tree to DB row
       setStatus("Updating backend with on-chain tree id...");
@@ -225,6 +226,8 @@ const RegisterTree = () => {
         dbId,
         chainTreeId: Number(treeId),
         ownerAddress: owner,
+        txHash,
+        chainId,
       });
 
       setResult({
@@ -232,6 +235,8 @@ const RegisterTree = () => {
         chainTreeId: Number(treeId),
         owner,
         txHash,
+        chainId,
+        txExplorerUrl,
       });
       setStatus("Tree successfully registered.");
       setForm(initialForm);
@@ -392,7 +397,21 @@ const RegisterTree = () => {
             <div className="mt-2 text-emerald-700 space-y-1 text-xs">
               <p>Database ID: {result.dbId}</p>
               <p>On-chain Tree ID: {result.chainTreeId}</p>
-              <p className="truncate">Tx: {result.txHash}</p>
+              <p className="truncate">
+                Tx:{" "}
+                {result.txExplorerUrl ? (
+                  <a
+                    href={result.txExplorerUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="font-mono text-emerald-700 hover:text-emerald-800"
+                  >
+                    {result.txHash}
+                  </a>
+                ) : (
+                  <span className="font-mono">{result.txHash}</span>
+                )}
+              </p>
             </div>
             
             <div className="mt-3 pt-3 border-t border-emerald-200">

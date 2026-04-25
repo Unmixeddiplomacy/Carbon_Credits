@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { BrowserProvider, Contract, id } from "ethers";
 import { useDispatch, useSelector } from "react-redux";
 import {
   retireCredits,
@@ -10,13 +11,41 @@ import {
 import { invalidateTransactions } from "../../store/marketplaceSlice";
 import { useCreditsInvalidation } from "../../hooks/useCreditsInvalidation";
 import { useCreditsData } from "../../hooks/useCreditsPolling";
+import useWalletLink from "../../hooks/useWalletLink";
+import { isSupportedNetwork, getNetworkErrorMessage } from "../../config/networks";
 import Button from "../ui/Button";
 import Input from "../ui/Input";
 import Card from "../ui/Card";
 
+const parsedScale = Number.parseInt(import.meta.env.VITE_CARBON_CHAIN_UNIT_SCALE || "10000", 10);
+const CHAIN_UNIT_SCALE = Number.isFinite(parsedScale) && parsedScale > 0 ? parsedScale : 10000;
+
+let carbonCreditAbi = null;
+let carbonCreditAddress = null;
+
+const loadCarbonCreditArtifacts = async () => {
+  try {
+    const abiModule = await import("../../contracts/CarbonCredit-abi.json");
+    const addressModule = await import("../../contracts/CarbonCredit-address.json");
+    carbonCreditAbi = abiModule.default;
+    carbonCreditAddress = addressModule.default.address;
+  } catch {
+    console.warn("CarbonCredit contract artifacts not found. Retirement on-chain sync unavailable.");
+  }
+};
+
+loadCarbonCreditArtifacts();
+
+function toChainUnits(amountKg) {
+  const value = Number.parseFloat(String(amountKg ?? ""));
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  return Math.round(value * CHAIN_UNIT_SCALE);
+}
+
 const RetireCredits = () => {
   const dispatch = useDispatch();
   const { invalidateCredits, invalidateHistory, invalidateRetirements } = useCreditsInvalidation();
+  const { isLinked, walletAddress, isMetamaskAvailable } = useWalletLink();
   
   // Use RTK Query for live credits data with automatic updates
   const { credits: summary } = useCreditsData();
@@ -32,6 +61,7 @@ const RetireCredits = () => {
   const [localError, setLocalError] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
   const [certificate, setCertificate] = useState(null);
+  const [status, setStatus] = useState("");
 
   const availableBalance = summary?.availableBalance ?? 0;
 
@@ -74,12 +104,53 @@ const RetireCredits = () => {
     setCertificate(null);
 
     try {
+      if (!isMetamaskAvailable || !window.ethereum) {
+        throw new Error("MetaMask is required to sync retirement on-chain.");
+      }
+      if (!isLinked || !walletAddress) {
+        throw new Error("Link your wallet first to retire credits on-chain.");
+      }
+      if (!carbonCreditAbi || !carbonCreditAddress) {
+        throw new Error("CarbonCredit contract is not configured for this frontend build.");
+      }
+
+      setStatus("Submitting retirement to blockchain...");
+      const provider = new BrowserProvider(window.ethereum);
+      await provider.send("eth_requestAccounts", []);
+
+      const network = await provider.getNetwork();
+      if (!isSupportedNetwork(network.chainId)) {
+        throw new Error(getNetworkErrorMessage());
+      }
+
+      const signer = await provider.getSigner();
+      const signerAddress = await signer.getAddress();
+      if (signerAddress.toLowerCase() !== walletAddress.toLowerCase()) {
+        throw new Error(`Wallet mismatch. Linked: ${walletAddress}, connected: ${signerAddress}`);
+      }
+
+      const amountUnits = toChainUnits(parseFloat(form.amount));
+      if (amountUnits <= 0) {
+        throw new Error("Amount is too small for on-chain retirement.");
+      }
+
+      const certificateHash = id(
+        `retire:${signerAddress}:${form.amount}:${form.reason.trim()}:${Date.now()}`
+      );
+
+      const contract = new Contract(carbonCreditAddress, carbonCreditAbi, signer);
+      const tx = await contract.retireCredits(amountUnits, form.reason.trim(), certificateHash);
+
+      setStatus("Waiting for blockchain confirmation...");
+      const receipt = await tx.wait();
+
+      setStatus("Recording retirement in platform database...");
       const result = await dispatch(
         retireCredits({
           amount: parseFloat(form.amount),
           reason: form.reason.trim(),
           beneficiaryName: form.beneficiaryName.trim() || null,
-          txHash: null, // Off-chain retirement
+          txHash: receipt.hash,
         })
       ).unwrap();
 
@@ -97,8 +168,10 @@ const RetireCredits = () => {
       invalidateCredits();
       invalidateHistory();
       invalidateRetirements();
+      setStatus("");
     } catch (err) {
-      setLocalError(err || "Failed to retire credits");
+      setStatus("");
+      setLocalError(err?.message || err || "Failed to retire credits");
     }
   };
 
@@ -207,6 +280,13 @@ const RetireCredits = () => {
             </div>
           )}
 
+          {/* On-chain status */}
+          {status && (
+            <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs text-blue-700">
+              {status}
+            </div>
+          )}
+
           {/* Success & Certificate */}
           {successMessage && (
             <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 space-y-2">
@@ -243,7 +323,7 @@ const RetireCredits = () => {
           )}
 
           {/* Retire Button */}
-          <Button onClick={handleRetire} disabled={isRetiring} className="w-full">
+          <Button onClick={handleRetire} disabled={isRetiring || !!status} className="w-full">
             {isRetiring ? "Processing..." : "Retire Credits"}
           </Button>
 

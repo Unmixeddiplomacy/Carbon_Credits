@@ -25,6 +25,7 @@
  */
 
 import pool from "../config/db.js";
+import { syncIssueCreditsOnChain } from "./carbonCreditOnchain.service.js";
 
 // ============================================================
 // Configuration
@@ -140,13 +141,16 @@ export async function issueInitialCredits(treeId, userId) {
     // 1. Fetch tree data
     const treeResult = await pool.query(
       `SELECT 
-        id,
-        metadata,
-        carbon_absorption_kg_per_year,
-        status,
-        total_credits_accrued
-       FROM trees 
-       WHERE id = $1 AND owner_user_id = $2`,
+        t.id,
+        t.metadata,
+        t.chain_tree_id,
+        t.carbon_absorption_kg_per_year,
+        t.status,
+        t.total_credits_accrued,
+        u.wallet_address as owner_wallet
+       FROM trees t
+       JOIN users u ON u.id = t.owner_user_id
+       WHERE t.id = $1 AND t.owner_user_id = $2`,
       [treeId, userId]
     );
     
@@ -229,6 +233,16 @@ export async function issueInitialCredits(treeId, userId) {
        WHERE id = $2`,
       [calculation.credits, treeId]
     );
+
+    await syncIssueCreditsOnChain({
+      chainTreeId: tree.chain_tree_id,
+      recipientWallet: tree.owner_wallet,
+      amountKg: calculation.credits,
+      source: "initial_issue",
+      reference: `tree:${treeId}:user:${userId}:activation:${activationDateStr}`,
+    }).catch((err) => {
+      console.error("[CarbonCredit] initial issue sync failed:", err?.message || err);
+    });
     
     console.log(`[InitialCredits] Tree ${treeId}: Issued ${calculation.credits.toFixed(4)} kg CO2 to user ${userId}`);
     

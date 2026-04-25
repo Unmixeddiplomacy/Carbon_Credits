@@ -14,6 +14,7 @@
 
 import pool from "../config/db.js";
 import cron from "node-cron";
+import { syncIssueCreditsOnChain } from "./carbonCreditOnchain.service.js";
 
 const CONFIG = {
   CRON_SCHEDULE: process.env.CRON_SCHEDULE || "0 2 * * *",
@@ -110,13 +111,16 @@ export async function runCreditAccrual() {
       `SELECT
         t.id,
         t.owner_user_id as user_id,
+        t.chain_tree_id,
         t.carbon_absorption_kg_per_year,
         t.metadata,
         t.registered_at,
         t.credits_accrued_until,
         t.status,
-        t.last_verified_at
+        t.last_verified_at,
+        u.wallet_address as owner_wallet
       FROM trees t
+      JOIN users u ON u.id = t.owner_user_id
       WHERE t.status = 'active'
         AND t.owner_user_id IS NOT NULL
         AND t.last_verified_at IS NOT NULL
@@ -185,6 +189,16 @@ export async function runCreditAccrual() {
         );
 
         await pool.query("COMMIT");
+
+        await syncIssueCreditsOnChain({
+          chainTreeId: tree.chain_tree_id,
+          recipientWallet: tree.owner_wallet,
+          amountKg: creditsToIssue,
+          source: "accrual",
+          reference: `tree:${tree.id}:run:${runDateStr}`,
+        }).catch((err) => {
+          console.error("[CarbonCredit] accrual sync failed:", err?.message || err);
+        });
 
         stats.treesProcessed++;
         stats.creditsIssued += creditsToIssue;

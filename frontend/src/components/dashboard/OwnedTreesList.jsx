@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import { fetchTrees, selectTreesState } from "../../store/treesSlice";
 import { fetchMyListings, selectMyListings, invalidateListings, invalidateTransactions } from "../../store/marketplaceSlice";
+import { getTxExplorerUrl } from "../../config/networks";
 import ListTreeModal from "../marketplace/ListTreeModal";
 
 const statusStyles = {
@@ -10,6 +11,11 @@ const statusStyles = {
   dead: "bg-red-50 text-red-700 border-red-200",
   listed: "bg-blue-50 text-blue-700 border-blue-200",
 };
+
+const explorerChainId = Number.parseInt(
+  import.meta.env.VITE_EXPLORER_CHAIN_ID || import.meta.env.VITE_CHAIN_ID || "11155111",
+  10
+);
 
 const OwnedTreesList = () => {
   const dispatch = useDispatch();
@@ -72,11 +78,17 @@ const OwnedTreesList = () => {
                 : "-",
               carbonAbsorptionKgPerYear: t.metadata?.absorptionKgPerYear || t.carbonAbsorptionKgPerYear || 0,
               totalCreditsAccrued: t.totalCreditsAccrued || 0,
+              txHash: t.txHash,
+              txChainId: t.txChainId,
               location: t.metadata?.geo
                 ? `${t.metadata.geo.lat}, ${t.metadata.geo.lon}`
                 : "-",
               status: isListed ? "listed" : t.status || "pending",
             };
+            const txExplorerUrl =
+              tree.txHash && Number.isFinite(tree.txChainId || explorerChainId)
+                ? getTxExplorerUrl(tree.txChainId || explorerChainId, tree.txHash)
+                : null;
             return (
               <article
                 key={tree.id}
@@ -94,6 +106,26 @@ const OwnedTreesList = () => {
                     <p className="text-[11px] text-neutral-500">
                       {tree.creditsPerYear} • {tree.totalCreditsAccrued.toFixed(2)} kg accumulated
                     </p>
+                    {tree.txHash && (
+                      <p className="text-[11px] text-neutral-500">
+                        Tx:{" "}
+                        {txExplorerUrl ? (
+                          <a
+                            href={txExplorerUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="font-mono text-emerald-700 hover:text-emerald-800"
+                            title={tree.txHash}
+                          >
+                            {tree.txHash.slice(0, 10)}...
+                          </a>
+                        ) : (
+                          <span className="font-mono" title={tree.txHash}>
+                            {tree.txHash.slice(0, 10)}...
+                          </span>
+                        )}
+                      </p>
+                    )}
                   </div>
                 </div>
                 <div className="flex items-center gap-2">

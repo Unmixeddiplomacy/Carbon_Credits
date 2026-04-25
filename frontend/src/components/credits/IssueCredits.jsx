@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
-import { BrowserProvider, Contract } from "ethers";
 import {
   fetchEligibleTrees,
   issueCreditsForTree,
@@ -13,30 +12,9 @@ import {
 } from "../../store/creditsSlice";
 import { fetchTrees } from "../../store/treesSlice";
 import { invalidateTransactions } from "../../store/marketplaceSlice";
-import useWalletLink from "../../hooks/useWalletLink";
 import { useCreditsInvalidation } from "../../hooks/useCreditsInvalidation";
 import Button from "../ui/Button";
 import Card from "../ui/Card";
-
-// Contract ABIs - load statically, will fail gracefully if not deployed yet
-let carbonCreditAbi = null;
-let carbonCreditAddress = null;
-
-// Try to load contract artifacts (may not exist until deployed)
-const loadContractArtifacts = async () => {
-  try {
-    const abiModule = await import("../../contracts/CarbonCredit-abi.json");
-    const addressModule = await import("../../contracts/CarbonCredit-address.json");
-    carbonCreditAbi = abiModule.default;
-    carbonCreditAddress = addressModule.default.address;
-  } catch {
-    // Contract not yet deployed - will use off-chain only
-    console.log("CarbonCredit contract not yet deployed");
-  }
-};
-
-// Load on module initialization
-loadContractArtifacts();
 
 const IssueCredits = () => {
   const dispatch = useDispatch();
@@ -45,8 +23,6 @@ const IssueCredits = () => {
   const isLoading = useSelector(selectEligibleTreesLoading);
   const isIssuing = useSelector(selectIssuingCredits);
   const issuingError = useSelector(selectIssuingError);
-
-  const { isLinked, walletAddress, isMetamaskAvailable } = useWalletLink();
 
   const [selectedTreeId, setSelectedTreeId] = useState(null);
   const [issueMode, setIssueMode] = useState("offchain"); // "offchain" or "onchain"
@@ -100,63 +76,18 @@ const IssueCredits = () => {
       return;
     }
 
-    if (!carbonCreditAbi || !carbonCreditAddress) {
-      setLocalError("CarbonCredit contract not deployed. Use off-chain mode.");
-      return;
-    }
-
-    if (!window.ethereum) {
-      setLocalError("MetaMask not found");
-      return;
-    }
-
     setLocalError("");
     setSuccessMessage("");
-    setStatus("Connecting to wallet...");
+    setStatus("Issuing credits and syncing on-chain...");
 
     try {
-      const provider = new BrowserProvider(window.ethereum);
-      await provider.send("eth_requestAccounts", []);
-
-      const network = await provider.getNetwork();
-      // Import network check from config
-      const { isSupportedNetwork, getNetworkErrorMessage } = await import("../../config/networks.js");
-      if (!isSupportedNetwork(network.chainId)) {
-        setLocalError(getNetworkErrorMessage());
-        setStatus("");
-        return;
-      }
-
-      const signer = await provider.getSigner();
-      const signerAddr = await signer.getAddress();
-
-      if (signerAddr.toLowerCase() !== selectedTree.ownerWallet?.toLowerCase()) {
-        setLocalError(
-          `Wallet mismatch. Tree owned by ${selectedTree.ownerWallet}, but you're connected as ${signerAddr}`
-        );
-        setStatus("");
-        return;
-      }
-
-      setStatus("Sending transaction to blockchain...");
-
-      const contract = new Contract(carbonCreditAddress, carbonCreditAbi, signer);
-      const tx = await contract.issueCredits(
-        selectedTree.chainTreeId,
-        Math.floor(selectedTree.absorptionKgPerYear)
-      );
-
-      setStatus("Waiting for confirmation...");
-      const receipt = await tx.wait();
-
-      // Now record on backend
-      setStatus("Recording on backend...");
+      // Backend keeps the existing DB issuance logic and performs oracle-based on-chain sync.
       const result = await dispatch(
-        issueCreditsForTree({ treeId: selectedTreeId, txHash: receipt.hash })
+        issueCreditsForTree({ treeId: selectedTreeId, txHash: null })
       ).unwrap();
 
       setSuccessMessage(
-        `Successfully issued ${result.issuance.amount} kg CO₂ credits on-chain! Tx: ${receipt.hash.slice(0, 10)}...`
+        `Successfully issued ${result.issuance.amount} kg CO₂ credits. On-chain sync triggered via backend oracle.`
       );
       setSelectedTreeId(null);
       setStatus("");
@@ -272,13 +203,13 @@ const IssueCredits = () => {
                 <button
                   type="button"
                   onClick={() => setIssueMode("onchain")}
-                  disabled={!selectedTree.isOnChain || !isMetamaskAvailable}
+                  disabled={!selectedTree.isOnChain}
                   className={`flex-1 rounded-lg border px-3 py-2 text-xs transition ${
                     issueMode === "onchain"
                       ? "border-emerald-500 bg-emerald-50 text-emerald-700"
                       : "border-neutral-200 text-neutral-600 hover:border-neutral-300"
                   } ${
-                    !selectedTree.isOnChain || !isMetamaskAvailable
+                    !selectedTree.isOnChain
                       ? "cursor-not-allowed opacity-50"
                       : ""
                   }`}
@@ -287,9 +218,7 @@ const IssueCredits = () => {
                   <span className="block text-[10px] text-neutral-500 mt-0.5">
                     {!selectedTree.isOnChain
                       ? "Tree not on-chain"
-                      : !isMetamaskAvailable
-                      ? "MetaMask required"
-                      : "Blockchain verified"}
+                      : "Backend oracle sync"}
                   </span>
                 </button>
               </div>

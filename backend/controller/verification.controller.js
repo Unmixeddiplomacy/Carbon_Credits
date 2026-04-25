@@ -40,6 +40,7 @@
 
 import pool from "../config/db.js";
 import { issueInitialCredits } from "../services/initialCreditIssuance.js";
+import { syncSlashCreditsOnChain } from "../services/carbonCreditOnchain.service.js";
 
 /**
  * Calculate distance between two GPS coordinates using Haversine formula
@@ -310,10 +311,14 @@ export const reportTreeDeath = async (req, res) => {
 
     // Verify tree exists and user owns it
     const treeResult = await pool.query(
-      `SELECT id, owner_user_id, status, latitude, longitude, 
-              metadata->>'plantedAt' as planted_at,
-              credits_accrued_until
-       FROM trees WHERE id = $1`,
+          `SELECT t.id, t.owner_user_id, t.status, t.latitude, t.longitude, 
+            t.metadata->>'plantedAt' as planted_at,
+            t.credits_accrued_until,
+            t.chain_tree_id,
+              u.wallet_address as owner_wallet
+       FROM trees t
+       JOIN users u ON u.id = t.owner_user_id
+       WHERE t.id = $1`,
       [treeId]
     );
 
@@ -442,6 +447,17 @@ export const reportTreeDeath = async (req, res) => {
       );
 
       console.log(`[DeathReport] Slashed ${creditsToSlash.toFixed(4)} credits for tree ${treeId}`);
+
+      await syncSlashCreditsOnChain({
+        chainTreeId: tree.chain_tree_id,
+        fromWallet: tree.owner_wallet,
+        amountKg: creditsToSlash,
+        reason: `tree_death:${deathDateStr}`,
+        source: "tree_death",
+        reference: `tree:${treeId}:verification:${verification.id}`,
+      }).catch((err) => {
+        console.error("[CarbonCredit] death slash sync failed:", err?.message || err);
+      });
     }
 
     // Build response message (always approved now)

@@ -1,10 +1,12 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import {
   fetchHistory,
   selectHistory,
   selectHistoryLoading,
 } from "../../store/creditsSlice";
+import apiClient from "../../api/client";
+import NFTCertificate from "../certificates/NFTCertificate";
 import Card from "../ui/Card";
 
 const transactionStyles = {
@@ -50,10 +52,33 @@ const CreditsHistory = () => {
   const dispatch = useDispatch();
   const history = useSelector(selectHistory);
   const isLoading = useSelector(selectHistoryLoading);
+  const [activeCertificate, setActiveCertificate] = useState(null);
+  const [certificateLoading, setCertificateLoading] = useState(false);
+  const [certificateError, setCertificateError] = useState("");
 
   useEffect(() => {
     dispatch(fetchHistory({ limit: 20, offset: 0 }));
   }, [dispatch]);
+
+  const handleViewCertificate = async (certNumber) => {
+    if (!certNumber) return;
+    setCertificateLoading(true);
+    setCertificateError("");
+
+    try {
+      const res = await apiClient.get(`/marketplace/certificates/${certNumber}`);
+      setActiveCertificate(res.data?.certificate || null);
+    } catch (err) {
+      setCertificateError(err?.response?.data?.error || "Unable to load certificate.");
+    } finally {
+      setCertificateLoading(false);
+    }
+  };
+
+  const handleCloseCertificate = () => {
+    setActiveCertificate(null);
+    setCertificateError("");
+  };
 
   const formatDate = (dateString) => {
     const date = new Date(dateString);
@@ -92,6 +117,7 @@ const CreditsHistory = () => {
   };
 
   return (
+    <>
     <Card className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
@@ -158,11 +184,20 @@ const CreditsHistory = () => {
                         </span>
                       )}
                       {tx.certificateNumber && (
-                        <span className="inline-flex items-center rounded bg-amber-100 px-1 py-0.5 text-[9px] font-mono text-amber-700">
+                        <button
+                          type="button"
+                          onClick={() => handleViewCertificate(tx.certificateNumber)}
+                          disabled={certificateLoading}
+                          className="inline-flex items-center gap-1 rounded bg-amber-100 px-1 py-0.5 text-[9px] font-mono text-amber-700 hover:bg-amber-200 disabled:opacity-50"
+                          title="View NFT certificate"
+                        >
                           #{tx.certificateNumber}
-                        </span>
+                        </button>
                       )}
                     </div>
+                    {certificateError && (
+                      <p className="mt-1 text-[10px] text-red-500">{certificateError}</p>
+                    )}
                   </div>
                 </div>
               </div>
@@ -171,6 +206,13 @@ const CreditsHistory = () => {
         </div>
       )}
     </Card>
+    {activeCertificate && (
+      <NFTCertificate
+        certificate={activeCertificate}
+        onClose={handleCloseCertificate}
+      />
+    )}
+    </>
   );
 };
 

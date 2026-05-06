@@ -30,6 +30,7 @@ const CERT_TYPE_MAP = {
   tree_sale: 2,
   credit_purchase: 3,
   credit_sale: 4,
+  credit_retirement: 5,
 };
 
 let provider = null;

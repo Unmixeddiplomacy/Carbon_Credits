@@ -16,6 +16,7 @@ const MyTreesPage = () => {
   const [selectedTree, setSelectedTree] = useState(null);
   const [showListModal, setShowListModal] = useState(false);
   const [statusFilter, setStatusFilter] = useState("all");
+  const [expandedTreeId, setExpandedTreeId] = useState(null);
 
   // Re-fetch on every navigation to this page
   useEffect(() => {
@@ -37,6 +38,10 @@ const MyTreesPage = () => {
     dispatch(fetchTrees());
     dispatch(invalidateListings());
     dispatch(invalidateTransactions());
+  };
+
+  const handleToggleDetails = (tree) => {
+    setExpandedTreeId((prev) => (prev === tree.id ? null : tree.id));
   };
 
   const filteredTrees = items.filter((t) => {
@@ -120,13 +125,15 @@ const MyTreesPage = () => {
 
         {/* Tree Grid */}
         {!isLoading && !error && filteredTrees.length > 0 && (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid items-start gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {filteredTrees.map((tree) => (
               <TreeCard
                 key={tree.id}
                 tree={tree}
                 isListed={listedTreeIds.has(tree.id)}
                 onSell={handleSell}
+                expanded={expandedTreeId === tree.id}
+                onToggleExpand={handleToggleDetails}
               />
             ))}
           </div>

@@ -5,6 +5,8 @@ import path from "path";
 import { fileURLToPath } from "url";
 import crypto from "crypto";
 import { syncIssueCreditsOnChain } from "../services/carbonCreditOnchain.service.js";
+import { issueRetirementCertificate } from "../services/certificate.service.js";
+import { mintCertificateNFT } from "../services/blockchain.service.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -375,6 +377,14 @@ export const retireCredits = async (req, res) => {
 
     await client.query("BEGIN");
 
+    const { rows: userRows } = await client.query(
+      `SELECT COALESCE(username, name, email) as username, wallet_address
+       FROM users WHERE id = $1`,
+      [userId]
+    );
+    const userName = userRows[0]?.username || "User";
+    const userWallet = userRows[0]?.wallet_address || null;
+
     // Get current balance
     const { rows: creditRows } = await client.query(
       `SELECT * FROM carbon_credits WHERE user_id = $1 FOR UPDATE`,
@@ -406,6 +416,18 @@ export const retireCredits = async (req, res) => {
       [userId, amount, reason.trim(), beneficiaryName || null, txHash || null, certificateNumber]
     );
 
+    const retirementId = retirementRows[0].id;
+
+    const retirementCert = await issueRetirementCertificate(client, {
+      retirementId,
+      userId,
+      amount,
+      reason: reason.trim(),
+      beneficiaryName: beneficiaryName || null,
+      username: userName,
+      certificateNumber,
+    });
+
     // Update credit balance
     await client.query(
       `UPDATE carbon_credits 
@@ -423,6 +445,15 @@ export const retireCredits = async (req, res) => {
 
     await client.query("COMMIT");
 
+    // Fire-and-forget on-chain NFT minting after DB commit
+    mintCertificateNFT({
+      certificateId: retirementCert.certificateId,
+      recipientWallet: userWallet,
+      certificateNumber: retirementCert.certificateNumber,
+      certificateHash: retirementCert.certificateHash,
+      certificateType: "credit_retirement",
+    }).catch((err) => console.error("[Blockchain] retireCredits mint error:", err?.message || err));
+
     return res.json({
       success: true,
       retirement: {
@@ -430,7 +461,7 @@ export const retireCredits = async (req, res) => {
         amount,
         reason: reason.trim(),
         beneficiaryName: beneficiaryName || null,
-        certificateNumber,
+        certificateNumber: retirementCert.certificateNumber,
         txHash: txHash || null,
         createdAt: retirementRows[0].created_at,
       },

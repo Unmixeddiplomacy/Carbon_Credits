@@ -6,6 +6,7 @@ const typeLabels = {
   tree_sale: "Tree Sale Certificate",
   credit_purchase: "Credit Purchase Certificate",
   credit_sale: "Credit Sale Certificate",
+  credit_retirement: "Credit Retirement Certificate",
 };
 
 const typeEmoji = {
@@ -13,6 +14,7 @@ const typeEmoji = {
   tree_sale: "🌳",
   credit_purchase: "💎",
   credit_sale: "💎",
+  credit_retirement: "🔥",
 };
 
 const typeBadge = {
@@ -20,6 +22,7 @@ const typeBadge = {
   tree_sale: "bg-emerald-50 text-emerald-700 ring-emerald-600/20",
   credit_purchase: "bg-violet-50 text-violet-700 ring-violet-600/20",
   credit_sale: "bg-amber-50 text-amber-700 ring-amber-600/20",
+  credit_retirement: "bg-orange-50 text-orange-700 ring-orange-600/20",
 };
 
 const mintStatusConfig = {
@@ -86,6 +89,11 @@ const NFTCertificate = ({ certificate, onClose }) => {
 
   const msConf = mintStatusConfig[mintStatus] || mintStatusConfig.pending;
   const etherscanLink = explorerUrl(chainId, txHash);
+  const beneficiaryName = certificate?.metadata?.beneficiaryName || null;
+  const partyLabelLeft =
+    type === "credit_retirement" ? "Retired By" : type?.includes("purchase") ? "Seller" : "Buyer";
+  const partyLabelRight =
+    type === "credit_retirement" ? "Beneficiary" : type?.includes("purchase") ? "Buyer" : "Seller";
 
   return (
     /* Backdrop — click outside closes, always scrollable */
@@ -175,7 +183,7 @@ const NFTCertificate = ({ certificate, onClose }) => {
 
             {/* ─ Values grid ─ */}
             <div className="grid grid-cols-2 gap-2 sm:gap-3">
-              <InfoCard label="Transaction Value">
+              <InfoCard label={type === "credit_retirement" ? "Retirement Value" : "Transaction Value"}>
                 <p className="text-base font-bold text-neutral-900 sm:text-lg">
                   ${amount?.toFixed(2)} <span className="text-[11px] font-normal text-neutral-400">{currency}</span>
                 </p>
@@ -214,15 +222,17 @@ const NFTCertificate = ({ certificate, onClose }) => {
             <div className="grid grid-cols-2 gap-2 rounded-xl border border-neutral-100 bg-neutral-50/50 p-3">
               <div>
                 <p className="text-[10px] font-semibold uppercase tracking-widest text-neutral-400">
-                  {type?.includes("purchase") ? "Seller" : "Buyer"}
+                  {partyLabelLeft}
                 </p>
                 <p className="mt-0.5 text-sm font-semibold text-neutral-900">{issuer?.username || "—"}</p>
               </div>
               <div>
                 <p className="text-[10px] font-semibold uppercase tracking-widest text-neutral-400">
-                  {type?.includes("purchase") ? "Buyer" : "Seller"}
+                  {partyLabelRight}
                 </p>
-                <p className="mt-0.5 text-sm font-semibold text-neutral-900">{recipient?.username || "—"}</p>
+                <p className="mt-0.5 text-sm font-semibold text-neutral-900">
+                  {type === "credit_retirement" ? beneficiaryName || recipient?.username || "—" : recipient?.username || "—"}
+                </p>
               </div>
             </div>
 

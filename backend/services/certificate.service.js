@@ -15,6 +15,7 @@ const CERT_PREFIXES = {
   tree_sale: "CC-TS",
   credit_purchase: "CC-CP",
   credit_sale: "CC-CS",
+  credit_retirement: "CC-CR",
 };
 
 /**
@@ -316,6 +317,85 @@ export async function issueCreditCertificates(client, opts) {
     sellerCertId,
     buyerHash,
     sellerHash,
+  };
+}
+
+/**
+ * Issue a CREDIT retirement certificate (burn).
+ *
+ * @param {import("pg").PoolClient} client
+ * @param {object} opts
+ *   - retirementId        credit_retirements.id
+ *   - userId
+ *   - amount              kg CO₂ retired
+ *   - reason
+ *   - beneficiaryName
+ *   - username            display name
+ *   - certificateNumber   optional override
+ */
+export async function issueRetirementCertificate(client, opts) {
+  const {
+    retirementId,
+    userId,
+    amount,
+    reason,
+    beneficiaryName,
+    username,
+    certificateNumber,
+  } = opts;
+
+  const now = new Date().toISOString();
+  const certNum = certificateNumber || generateCertificateNumber("credit_retirement");
+  const normalizedAmount = parseFloat(amount);
+
+  const certFields = {
+    certificateNumber: certNum,
+    type: "credit_retirement",
+    retirementId,
+    userId,
+    amount: normalizedAmount,
+    reason: reason || "",
+    beneficiaryName: beneficiaryName || null,
+    issuedAt: now,
+  };
+  const certHash = computeCertificateHash(certFields);
+
+  const meta = {
+    reason: reason || "",
+    beneficiaryName: beneficiaryName || null,
+    retiredBy: username || null,
+    network: "CarbonCredit Platform",
+    version: "1.0",
+  };
+
+  const insert = await client.query(
+    `INSERT INTO certificates
+       (certificate_number, certificate_hash, certificate_type,
+        credit_retirement_id, issuer_user_id, recipient_user_id,
+        asset_type, asset_description, amount, currency, credits_amount,
+        metadata, issued_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW())
+     RETURNING id`,
+    [
+      certNum,
+      certHash,
+      "credit_retirement",
+      retirementId,
+      userId,
+      userId,
+      "carbon_credit",
+      `Retirement of ${normalizedAmount.toFixed(2)} kg CO₂ credits`,
+      0,
+      "USD",
+      normalizedAmount,
+      JSON.stringify(meta),
+    ]
+  );
+
+  return {
+    certificateNumber: certNum,
+    certificateHash: certHash,
+    certificateId: insert.rows[0].id,
   };
 }
 

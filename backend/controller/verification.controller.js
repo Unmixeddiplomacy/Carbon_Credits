@@ -16,9 +16,8 @@
  * 2. PERIODIC VERIFICATION (tree.status = "active"):
  *    - User submits photo + GPS coordinates
  *    - Distance calculated from tree's stored GPS
- *    - Auto-approve if within 100m (normal variation)
- *    - Flag "needs_review" if > 1000m (possible location error)
- *    - Otherwise stays "pending" for optional admin review
+ *    - Must be within 20m (strict location lock)
+ *    - Otherwise rejected (prevents verifying a different tree/location)
  * 
  * 3. DEATH REPORT (Auto-approve, same as first verification):
  *    - User submits photo + GPS + death date
@@ -61,15 +60,53 @@ function calculateDistance(lat1, lon1, lat2, lon2) {
   return R * c;
 }
 
+const STRICT_DISTANCE_METERS = 20;
+
+async function findNearbyTree(latitude, longitude, excludeTreeId) {
+  // Rough bounding box to reduce scan (~20m)
+  const latDelta = 0.0002;
+  const lonDelta = 0.0002;
+
+  const { rows } = await pool.query(
+    `SELECT id, latitude, longitude
+     FROM trees
+     WHERE id <> $1
+       AND latitude IS NOT NULL
+       AND longitude IS NOT NULL
+       AND latitude BETWEEN $2 AND $3
+       AND longitude BETWEEN $4 AND $5`,
+    [
+      excludeTreeId,
+      latitude - latDelta,
+      latitude + latDelta,
+      longitude - lonDelta,
+      longitude + lonDelta,
+    ]
+  );
+
+  for (const row of rows) {
+    const distance = calculateDistance(
+      latitude,
+      longitude,
+      row.latitude,
+      row.longitude
+    );
+    if (distance <= STRICT_DISTANCE_METERS) {
+      return { treeId: row.id, distance };
+    }
+  }
+
+  return null;
+}
+
 /**
  * Determine verification status based on tree state and verification type
  * 
  * Logic:
  * - FIRST VERIFICATION (tree.status === "pending"): Auto-approve immediately
- * - PERIODIC VERIFICATION (tree.status === "active"): Requires admin review
- *   - If tree has old GPS and distance is within 100m: auto-approve
- *   - If distance > 1000m: flag for review
- *   - Otherwise: pending review
+ * - PERIODIC VERIFICATION (tree.status === "active"): Strict distance lock
+ *   - If distance <= 20m: auto-approve
+ *   - Otherwise: pending (usually blocked earlier)
  */
 function determineVerificationStatus(treeStatus, distanceFromTree) {
   // First verification: always auto-approve to activate tree
@@ -83,15 +120,11 @@ function determineVerificationStatus(treeStatus, distanceFromTree) {
       // No GPS comparison possible (shouldn't happen for active tree, but safety)
       return "pending";
     }
-    if (distanceFromTree <= 100) {
-      // Within 100m of registered location: auto-approve
+    if (distanceFromTree <= STRICT_DISTANCE_METERS) {
+      // Strict location match
       return "approved";
     }
-    if (distanceFromTree > 1000) {
-      // Very far: flag for admin review
-      return "needs_review";
-    }
-    // Between 100-1000m: needs review
+    // Outside strict radius: pending (should be blocked by submitVerification)
     return "pending";
   }
 
@@ -189,6 +222,26 @@ export const submitVerification = async (req, res) => {
         latitude,
         longitude
       );
+    }
+
+    // Strict location lock for active trees
+    if (tree.status === "active" && distanceFromTree !== null && distanceFromTree > STRICT_DISTANCE_METERS) {
+      return res.status(400).json({
+        error: "Verification location does not match the registered tree location (20m max).",
+        distanceFromTree: Math.round(distanceFromTree),
+      });
+    }
+
+    // Prevent registering a different tree at the same location on first verification
+    if (tree.status === "pending") {
+      const nearby = await findNearbyTree(latitude, longitude, treeId);
+      if (nearby) {
+        return res.status(400).json({
+          error: "This location is already verified for another tree. Move at least 20m away.",
+          distanceFromTree: Math.round(nearby.distance),
+          conflictingTreeId: nearby.treeId,
+        });
+      }
     }
 
     // Determine verification status (modular logic)
